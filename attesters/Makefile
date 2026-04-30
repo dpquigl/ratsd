@@ -3,6 +3,7 @@
 
 SUBDIR := tsm
 SUBDIR += mocktsm
+SUBDIR += pcitsm
 
 clean: ; $(RM) -rf ./bin
 
