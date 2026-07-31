@@ -3,11 +3,11 @@
 package main
 
 import (
-	"github.com/veraison/ratsd/attesters/pcitsm"
+	"github.com/veraison/ratsd/attesters/deviceevidence"
 	"github.com/veraison/ratsd/plugin"
 )
 
 func main() {
-	plugin.RegisterImplementation(&pcitsm.Plugin{})
+	plugin.RegisterImplementation(&deviceevidence.Plugin{})
 	plugin.Serve()
 }

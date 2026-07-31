@@ -1,17 +1,20 @@
 // Copyright 2025 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package pcitsm implements a RATSd evidence attester plugin for the pci-tsm
-// generic netlink interface exposed by the devsec/tsm Linux kernel branch.
+// Package deviceevidence implements a RATSd evidence attester plugin for the
+// device-evidence generic netlink interface exposed by the devsec/tsm Linux
+// kernel branch (devsec-phase2).
 //
 // It collects SPDM certificate chains (cert0–cert7), VCA transcript,
 // measurement response, and TDISP interface report from the guest kernel's
-// pci-tsm driver and returns them as a CBOR-encoded evidence bundle.
+// device-evidence interface and returns them as a CBOR-encoded evidence bundle,
+// reassembling any object split across multiple netlink messages and carrying
+// the evidence generation reported by the kernel.
 //
-// The plugin is selected by TDM via the attester-selection key "pci-tsm" and
-// requires the option "pci-bdf" (the PCI Bus:Device.Function address of the
+// The plugin is selected by TDM via the attester-selection key "device-evidence"
+// and requires the option "pci-bdf" (the PCI Bus:Device.Function address of the
 // target TDI device, e.g. "0000:01:00.0").
-package pcitsm
+package deviceevidence
 
 import (
 	"encoding/json"
@@ -23,14 +26,15 @@ import (
 
 const (
 	// PluginName is the attester-selection key used by TDM.
-	PluginName = "pci-tsm"
+	PluginName = "device-evidence"
 	pluginVersion = "0.1.0"
 
-	// ContentType is the MIME type for the CBOR-encoded pci-tsm evidence bundle.
-	ContentType = "application/vnd.veraison.pci-tsm+cbor"
+	// ContentType is the MIME type for the CBOR-encoded device-evidence bundle.
+	ContentType = "application/vnd.veraison.device-evidence+cbor"
 
-	// nonceMaxSize matches the kernel ABI limit (max-nonce-size in pci-tsm.yaml).
-	nonceMaxSize = 256
+	// nonceMaxSize matches the kernel ABI limit (max-nonce-size in
+	// device-evidence.yaml).
+	nonceMaxSize = 32
 )
 
 var (
@@ -49,7 +53,7 @@ var (
 	statusOK = &compositor.Status{Result: true, Error: ""}
 )
 
-// Plugin implements the RATSd IPluggable interface for pci-tsm evidence.
+// Plugin implements the RATSd IPluggable interface for device-evidence.
 type Plugin struct{}
 
 func errOut(e error) *compositor.EvidenceOut {
@@ -62,7 +66,7 @@ func (p *Plugin) GetSubAttesterID() *compositor.SubAttesterIDOut {
 	return &compositor.SubAttesterIDOut{SubAttesterID: sid, Status: statusOK}
 }
 
-// GetSupportedFormats probes for the pci-tsm netlink family. If the kernel
+// GetSupportedFormats probes for the device-evidence netlink family. If the kernel
 // module is not loaded the plugin reports itself as unavailable so RATSd can
 // skip it rather than returning an error at evidence-collection time.
 func (p *Plugin) GetSupportedFormats() *compositor.SupportedFormatsOut {
@@ -75,7 +79,7 @@ func (p *Plugin) GetSupportedFormats() *compositor.SupportedFormatsOut {
 		return &compositor.SupportedFormatsOut{
 			Status: &compositor.Status{
 				Result: false,
-				Error:  fmt.Sprintf("pci-tsm kernel family not available: %v", err),
+				Error:  fmt.Sprintf("device-evidence kernel family not available: %v", err),
 			},
 		}
 	}
@@ -114,15 +118,15 @@ func (p *Plugin) GetEvidence(in *compositor.EvidenceIn) *compositor.EvidenceOut 
 		return errOut(fmt.Errorf("required option \"pci-bdf\" not provided"))
 	}
 
-	objects, err := readEvidence(bdf, in.Nonce)
+	result, err := readEvidence(bdf, in.Nonce)
 	if err != nil {
-		return errOut(fmt.Errorf("reading pci-tsm evidence for %s: %w", bdf, err))
+		return errOut(fmt.Errorf("reading device-evidence for %s: %w", bdf, err))
 	}
-	if len(objects) == 0 {
+	if len(result.Objects) == 0 {
 		return errOut(fmt.Errorf("no evidence objects returned for %s", bdf))
 	}
 
-	encoded, err := encodeBundle(bdf, in.Nonce, objects)
+	encoded, err := encodeBundle(bdf, in.Nonce, result)
 	if err != nil {
 		return errOut(fmt.Errorf("encoding evidence bundle: %w", err))
 	}
@@ -133,9 +137,10 @@ func (p *Plugin) GetEvidence(in *compositor.EvidenceIn) *compositor.EvidenceOut 
 // EvidenceBundle is the top-level CBOR structure returned to RATSd and
 // ultimately forwarded to the Veraison verifier.
 type EvidenceBundle struct {
-	DevName string           `cbor:"dev-name"`
-	Nonce   []byte           `cbor:"nonce"`
-	Objects []evidenceObject `cbor:"objects"`
+	DevName    string           `cbor:"dev-name"`
+	Nonce      []byte           `cbor:"nonce"`
+	Generation uint32           `cbor:"generation"`
+	Objects    []evidenceObject `cbor:"objects"`
 }
 
 type evidenceObject struct {
@@ -143,10 +148,15 @@ type evidenceObject struct {
 	Val  []byte `cbor:"val"`
 }
 
-func encodeBundle(bdf string, nonce []byte, raw []EvidenceObject) ([]byte, error) {
-	objs := make([]evidenceObject, len(raw))
-	for i, o := range raw {
+func encodeBundle(bdf string, nonce []byte, result *ReadResult) ([]byte, error) {
+	objs := make([]evidenceObject, len(result.Objects))
+	for i, o := range result.Objects {
 		objs[i] = evidenceObject{Type: o.Type, Val: o.Val}
 	}
-	return cbor.Marshal(EvidenceBundle{DevName: bdf, Nonce: nonce, Objects: objs})
+	return cbor.Marshal(EvidenceBundle{
+		DevName:    bdf,
+		Nonce:      nonce,
+		Generation: result.Generation,
+		Objects:    objs,
+	})
 }
