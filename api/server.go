@@ -99,7 +99,6 @@ func (s *Server) RatsdChares(w http.ResponseWriter, r *http.Request, param Ratsd
 		return
 	}
 	s.logger.Info("request nonce: ", requestData.Nonce)
-	s.logger.Info("request media type: ", *(param.Accept))
 
 	// Use a map until we finalize ratsd output format
 	eat := make(map[string]interface{})

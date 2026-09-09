@@ -33,10 +33,35 @@ const (
 	// subsysPCI is the device subsystem for PCIe TDIs.
 	subsysPCI = "pci"
 
+	// Evidence object type IDs, matching enum device_evidence_type in
+	// include/uapi/linux/device-evidence.h (devsec/tsm kernel branch).
+	//
+	// Exported so other RATSd sub-attester plugins (e.g. tdispclaims) sharing
+	// this netlink family can identify the objects they need without
+	// duplicating the family/attribute plumbing in this file.
+	EvTypeCert0        uint32 = 0
+	EvTypeCert1        uint32 = 1
+	EvTypeCert2        uint32 = 2
+	EvTypeCert3        uint32 = 3
+	EvTypeCert4        uint32 = 4
+	EvTypeCert5        uint32 = 5
+	EvTypeCert6        uint32 = 6
+	EvTypeCert7        uint32 = 7
+	EvTypeVCA          uint32 = 8
+	EvTypeMeasurements uint32 = 9
+	EvTypeReport       uint32 = 10
+
 	// evidenceTypeFlagAll requests cert0–cert7, vca, measurements, and report
-	// (11 evidence types, one bit per type).
+	// (11 evidence types, one bit per type), matching
+	// DEVICE_EVIDENCE_TYPE_FLAG_MASK.
 	evidenceTypeFlagAll uint32 = 0x7FF
 )
+
+// EvTypeCerts is EvTypeCert0..EvTypeCert7 in slot order.
+var EvTypeCerts = [8]uint32{
+	EvTypeCert0, EvTypeCert1, EvTypeCert2, EvTypeCert3,
+	EvTypeCert4, EvTypeCert5, EvTypeCert6, EvTypeCert7,
+}
 
 // EvidenceObject is a single (reassembled) evidence object returned by the kernel.
 type EvidenceObject struct {
@@ -51,20 +76,52 @@ type ReadResult struct {
 	Generation uint32
 }
 
+// Object returns the reassembled evidence object of the given type, if
+// present. It linear-scans Objects, which is kept as the authoritative,
+// order-preserving representation (other code/debug output may depend on its
+// shape); the type-count per read is small (at most 11 today) so this is
+// cheap.
+func (r *ReadResult) Object(t uint32) ([]byte, bool) {
+	if r == nil {
+		return nil, false
+	}
+	for _, o := range r.Objects {
+		if o.Type == t {
+			return o.Val, true
+		}
+	}
+	return nil, false
+}
+
 // genetlinkDial is a thin wrapper so deviceevidence.go can probe availability
 // without importing the genetlink package directly.
 func genetlinkDial() (*genetlink.Conn, error) {
 	return genetlink.Dial(nil)
 }
 
-// readEvidence opens a generic netlink socket, resolves the device-evidence
+// FamilyAvailable reports whether the device-evidence generic netlink family
+// is resolvable, i.e. the devsec/tsm kernel module is loaded. Exported so
+// other RATSd sub-attester plugins sharing this family (e.g. tdispclaims) can
+// reuse the same probe in their own GetSupportedFormats instead of
+// duplicating the dial/GetFamily logic.
+func FamilyAvailable() error {
+	conn, err := genetlinkDial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.GetFamily(familyName)
+	return err
+}
+
+// ReadEvidence opens a generic netlink socket, resolves the device-evidence
 // family, and issues a 'read' dump request for the device identified by bdf
 // with the given nonce. Large evidence objects may be split across several dump
 // messages (each preceded by its total length); this function reassembles the
 // ordered 'val' chunks per object and captures the evidence generation.
 //
 // Requires CAP_NET_ADMIN. Blocks the calling goroutine.
-func readEvidence(bdf string, nonce []byte) (*ReadResult, error) {
+func ReadEvidence(bdf string, nonce []byte) (*ReadResult, error) {
 	conn, err := genetlink.Dial(nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening generic netlink socket (CAP_NET_ADMIN required): %w", err)

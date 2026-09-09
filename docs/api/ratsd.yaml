@@ -14,7 +14,7 @@ paths:
         '200':
           description: The request has succeeded.
           content:
-            application/eat+jwt; eat_profile="tag:github.com,2024:veraison/ratsd":
+            application/eat-ucs+json; eat_profile="tag:github.com,2024:veraison/ratsd":
               schema:
                 $ref: '#/components/schemas/EAT'
         '400':
@@ -45,7 +45,7 @@ paths:
         '200':
           description: The request has succeeded.
           content:
-            application/vnd.veraison.attesters+json:
+            application/json:
               schema:
                 type: array
                 items:
@@ -82,19 +82,38 @@ components:
           type: string
         instance:
           type: string
-    CMW:
+    CMWMonad:
+      description: >-
+        Doc-only schema: not referenced by any request/response field
+        (OpenAPI 3.0 cannot express "a base64 string that decodes to this
+        shape"). Describes the decoded shape of one entry of a
+        CMWCollection, i.e. what a caller gets after base64url-decoding a
+        CMWCollection entry's second array element. On the wire it is a
+        JSON array of 2 or 3 elements: [media-type, value] or
+        [media-type, value, indicator], where value is base64url-encoded
+        (note: a different base64 alphabet than the EAT.cmw field, which
+        is standard/padded).
+      type: array
+      minItems: 2
+      maxItems: 3
+      items: {}
+      example:
+        - application/vnd.veraison.configfs-tsm+json
+        - eyJwcm92aWRlciI6ImZha2UifQ
+    CMWCollection:
+      description: >-
+        Doc-only schema: not referenced by any request/response field (see
+        CMWMonad note). Describes the JSON object obtained by
+        base64(std)-decoding the EAT.cmw field and then JSON-parsing the
+        resulting text. Contains a `__cmwc_t` type-indicator key plus one
+        entry per requested sub-attester, keyed by plugin name (e.g.
+        "device-evidence"); each such entry is a CMWMonad.
       type: object
-      required:
-        - typ
-        - val
       properties:
-        typ:
+        __cmwc_t:
           type: string
-          enum:
-            - application/vnd.veraison.configfs-tsm+json
-        val:
-          type: string
-          format: base64url
+      additionalProperties:
+        $ref: '#/components/schemas/CMWMonad'
     ChaResRequest:
       type: object
       required:
@@ -105,21 +124,47 @@ components:
           type: string
           format: base64url
         attester-selection:
-          type: string
-          format: json
+          type: object
+          description: >-
+            Keyed by sub-attester plugin name (e.g. "device-evidence");
+            each value is a flat map of string options for that
+            sub-attester (e.g. {"pci-bdf": "0000:01:00.0"}). Generated as
+            json.RawMessage (via x-go-type) rather than a typed Go map
+            because the server re-unmarshals this field in two stages
+            (first keyed by plugin name, then per-plugin options); the
+            schema below documents the true shape without changing the
+            handler's parsing code.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
           x-omitempty: true
+          x-go-type: json.RawMessage
     EAT:
       type: object
       required:
         - eat_profile
-        - nested-token
+        - eat_nonce
+        - cmw
       properties:
         eat_profile:
           type: string
           enum:
             - tag:github.com,2024:veraison/ratsd
-        nested-token:
-          $ref: '#/components/schemas/CMW'
+        eat_nonce:
+          type: string
+          format: base64url
+          description: The nonce from the request, echoed back verbatim.
+        cmw:
+          type: string
+          format: byte
+          description: >-
+            Standard (padded) base64 encoding of the JSON-serialized text
+            of a CMW Collection (see the CMWCollection schema) -- i.e. this
+            is base64-of-JSON-text, not a base64 encoding of raw evidence
+            bytes. Base64-decoding this field yields JSON text, which must
+            itself be JSON-parsed to obtain the CMWCollection object; it is
+            not ready-to-consume binary evidence on its own.
     Option:
       type: object
       required:

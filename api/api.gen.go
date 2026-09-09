@@ -40,11 +40,6 @@ const (
 	TagGithubCom2024VeraisonratsdErrorInvalidrequest BadRequestErrorType = "tag:github.com,2024:veraison/ratsd:error:invalidrequest"
 )
 
-// Defines values for CMWTyp.
-const (
-	ApplicationvndVeraisonConfigfsTsmJson CMWTyp = "application/vnd.veraison.configfs-tsm+json"
-)
-
 // Defines values for EATEatProfile.
 const (
 	TagGithubCom2024Veraisonratsd EATEatProfile = "tag:github.com,2024:veraison/ratsd"
@@ -93,25 +88,21 @@ type BadRequestErrorTitle string
 // BadRequestErrorType defines model for BadRequestError.Type.
 type BadRequestErrorType string
 
-// CMW defines model for CMW.
-type CMW struct {
-	Typ CMWTyp `json:"typ"`
-	Val string `json:"val"`
-}
-
-// CMWTyp defines model for CMW.Typ.
-type CMWTyp string
-
 // ChaResRequest defines model for ChaResRequest.
 type ChaResRequest struct {
+	// AttesterSelection Keyed by sub-attester plugin name (e.g. "device-evidence"); each value is a flat map of string options for that sub-attester (e.g. {"pci-bdf": "0000:01:00.0"}). Generated as json.RawMessage (via x-go-type) rather than a typed Go map because the server re-unmarshals this field in two stages (first keyed by plugin name, then per-plugin options); the schema below documents the true shape without changing the handler's parsing code.
 	AttesterSelection json.RawMessage `json:"attester-selection,omitempty"`
 	Nonce             string          `json:"nonce"`
 }
 
 // EAT defines model for EAT.
 type EAT struct {
-	EatProfile  EATEatProfile `json:"eat_profile"`
-	NestedToken CMW           `json:"nested-token"`
+	// Cmw Standard (padded) base64 encoding of the JSON-serialized text of a CMW Collection (see the CMWCollection schema) -- i.e. this is base64-of-JSON-text, not a base64 encoding of raw evidence bytes. Base64-decoding this field yields JSON text, which must itself be JSON-parsed to obtain the CMWCollection object; it is not ready-to-consume binary evidence on its own.
+	Cmw []byte `json:"cmw"`
+
+	// EatNonce The nonce from the request, echoed back verbatim.
+	EatNonce   string        `json:"eat_nonce"`
+	EatProfile EATEatProfile `json:"eat_profile"`
 }
 
 // EATEatProfile defines model for EAT.EatProfile.
@@ -369,23 +360,30 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/7RW32/bNhD+Vwhub5VlNQv2oGEPjhcMfShWJBn6kAbDSTxbzCSSI49uvcD/+0BKsmVb",
-	"rp2iy1Ms3h2/7358xxde6sZohYocz1+4AQsNEtr4a17BHbo7/Mejow/boxTKEg0FC6l4zisEgZYnXEGD",
-	"POfdccJdWWEDwY7WJpw4slIt+Waz6Q/jPTcgukturdU2ArHaoCWJ0UAggaxHAiVcKkegShw9dATkYwRU",
-	"vuH543WWPSW9nfJNgTbYkaQaB2ZcqhXUUjDbwuI7p13w9sPOh2CZLyVVvkhL3SRX2dV1vkIL0mk1tUBO",
-	"5Bjo5V3w07E3CQ+H0qKIgcNpD3JLauemi2csKUCav/94nDxamyFMMKaWJZDUarpSIu0hpqVWC7lcuAm5",
-	"5s2z02qU9QpiHRbaNkA85wU4/Pna25pfQIO3/qPQh712TAKI0BHaicMaywB+D0WEewgg4V8mupGEjaE1",
-	"z8l63CRc6a5bvoFC65uMoRnjdDt7OGaCQH8ZqxeyfmX3jJZDBRxiQvpvjBn50eKC5/yH6W6up92kTUN3",
-	"HDIaojmINsboD9On/mBAgWByOBDbMnSDFoaVcBn/K7SuEULNwFpY86S/ZJRk1JWXc8UJVskAyhiBe1/M",
-	"uuIdszhxT8J1pB1tQju5c5nu0rQViY7kKOIxlH8q8FRpK/9F8f9L4tuLJDGounPMD6B9X1k8E/kbRTFQ",
-	"xtJbSev7UJ02ezcIFu3MUxV+xbIFpyJ+3slARWTabSXVQsd8tmnhd7OHe3a7kgJViWyu604H2G+AjVZs",
-	"9uFdEDu0Ls4Lz9Isfdu2Eiowkuf8pzRLM55wA1RFUG02pmUFtkVpdCuFAl1pZTd6QSnrGtUSmUVntHIY",
-	"bkvZLK5dx4CVWwtQImHeaMWcj/VL2BIVWiB0jCpk2FOQit3OHtjnKZu//8habUx5xGvjsngnAu2AcN4C",
-	"TPZeC4/jE7EzmZ55TWye2gKjoxst1oF3qRWhiik4vbUimHZf9aWEs0q4t2w2+73V7Yk+ubESV1n2FUAI",
-	"9Ob5M/3CBmr666cLOv8TvxxzWCYR6X43PFTYv1JYBa6tMwoUaei266/iNlYXNTavTN7ha+0EKId2hZaV",
-	"2teCKU3MK4E2KJOIndeDFh4Zada/uNxaEXzpwL/97uCPlXUE/qyVOrmvdumemMSOH8rI49PmKRh0U+x8",
-	"0b8SYgctcWSUf0diwGrpiOlFzIrzxWTrx2AFsoaiRqYVo0o61kBZSYUnJvN+eOmrWnhvprYxRpJ70f4b",
-	"btnjJfiqHo5//wUAAP//B2zyTacMAAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

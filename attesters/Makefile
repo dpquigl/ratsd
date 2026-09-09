@@ -3,7 +3,8 @@
 
 SUBDIR := tsm
 SUBDIR += mocktsm
-SUBDIR += pcitsm
+SUBDIR += deviceevidence
+SUBDIR += tdispclaims
 
 clean: ; $(RM) -rf ./bin
 
